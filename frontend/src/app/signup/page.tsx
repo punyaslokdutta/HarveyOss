@@ -9,6 +9,7 @@ import Link from "next/link";
 import { SiteLogo } from "@/components/site-logo";
 import { CheckCircle2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { updateUserProfile } from "@/app/lib/mikeApi";
 
 export default function SignupPage() {
     const router = useRouter();
@@ -59,19 +60,12 @@ export default function SignupPage() {
                 const trimmedName = name.trim();
                 const trimmedOrg = organisation.trim();
                 if (trimmedName || trimmedOrg) {
-                    // The handle_new_user DB trigger creates the
-                    // user_profiles row synchronously on auth.users insert,
-                    // so we UPDATE rather than upsert — RLS permits update
-                    // of the user's own row but blocks self-INSERT.
-                    const { error: profileError } = await supabase
-                        .from("user_profiles")
-                        .update({
-                            ...(trimmedName && { display_name: trimmedName }),
+                    try {
+                        await updateUserProfile({
+                            ...(trimmedName && { displayName: trimmedName }),
                             ...(trimmedOrg && { organisation: trimmedOrg }),
-                            updated_at: new Date().toISOString(),
-                        })
-                        .eq("user_id", data.session.user.id);
-                    if (profileError) {
+                        });
+                    } catch (profileError) {
                         console.error(
                             "[signup] failed to persist profile fields",
                             profileError,
@@ -83,8 +77,12 @@ export default function SignupPage() {
             setTimeout(() => {
                 router.push("/assistant");
             }, 2000);
-        } catch (error: any) {
-            setError(error.message || "An error occurred during signup");
+        } catch (error: unknown) {
+            setError(
+                error instanceof Error
+                    ? error.message
+                    : "An error occurred during signup",
+            );
         } finally {
             setLoading(false);
         }
@@ -121,7 +119,7 @@ export default function SignupPage() {
                 <SiteLogo size="md" className="md:text-4xl" asLink />
             </div>
             <div className="w-full max-w-md">
-                <div className="bg-white border border-gray-200 rounded-2xl p-8">
+                <div className="bg-white border border-gray-200 rounded-2xl p-8 mb-4">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-left text-2xl font-serif">
                             Create Account
@@ -275,6 +273,12 @@ export default function SignupPage() {
                         </Link>
                     </div>
                 </div>
+                <p className="text-center text-xs text-gray-500 leading-relaxed px-2">
+                    Mike hosted on MikeOSS.com is currently a demo service.
+                    Please do not upload, submit, or store sensitive,
+                    confidential, privileged, client, or personally identifiable
+                    documents.
+                </p>
             </div>
         </div>
     );

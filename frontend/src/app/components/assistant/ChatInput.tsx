@@ -67,10 +67,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     } | null>(null);
     const [model, setModel] = useSelectedModel();
     const { profile } = useUserProfile();
-    const apiKeys = {
-        claudeApiKey: profile?.claudeApiKey ?? null,
-        geminiApiKey: profile?.geminiApiKey ?? null,
-    };
+    const apiKeys = profile
+        ? {
+              claudeApiKey: profile?.claudeApiKey ?? null,
+              geminiApiKey: profile?.geminiApiKey ?? null,
+          }
+        : undefined;
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [docSelectorOpen, setDocSelectorOpen] = useState(false);
     const [workflowModalOpen, setWorkflowModalOpen] = useState(false);
@@ -116,7 +118,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
     const handleSubmit = () => {
         const query = value.trim();
         if (!query || isLoading) return;
-        if (!isModelAvailable(model, apiKeys)) {
+        if (apiKeys && !isModelAvailable(model, apiKeys)) {
             setApiKeyModalProvider(getModelProvider(model));
             return;
         }

@@ -66,6 +66,7 @@ import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 
 interface Props {
     projectId: string;
+    initialTab?: Tab;
 }
 
 type Tab = "documents" | "assistant" | "reviews";
@@ -271,7 +272,7 @@ function DocVersionHistory({
     );
 }
 
-export function ProjectPage({ projectId }: Props) {
+export function ProjectPage({ projectId, initialTab = "documents" }: Props) {
     const [project, setProject] = useState<MikeProject | null>(null);
     const [folders, setFolders] = useState<MikeFolder[]>([]);
     const [chats, setChats] = useState<MikeChat[]>([]);
@@ -282,7 +283,7 @@ export function ProjectPage({ projectId }: Props) {
     const tab: Tab =
         tabParam === "assistant" || tabParam === "reviews"
             ? tabParam
-            : "documents";
+            : initialTab;
     const [addDocsOpen, setAddDocsOpen] = useState(false);
     const [peopleModalOpen, setPeopleModalOpen] = useState(false);
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
