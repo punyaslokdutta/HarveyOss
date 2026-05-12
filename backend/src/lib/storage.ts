@@ -1,27 +1,41 @@
 /**
- * Supabase Storage utilities for Mike document management.
+ * S3-compatible storage utilities for Mike document management.
+ *
+ * Works with Cloudflare R2 in hosted environments and MinIO in local Docker.
  *
  * Required env vars:
- *   SUPABASE_URL         — your Supabase project URL
- *   SUPABASE_SECRET_KEY  — service role key (bypasses RLS)
- *   STORAGE_BUCKET       — storage bucket name (default: "mike")
+ *   R2_ENDPOINT_URL        — S3 endpoint URL
+ *   R2_ACCESS_KEY_ID       — access key
+ *   R2_SECRET_ACCESS_KEY   — secret key
+ *   R2_BUCKET_NAME         — bucket name (default: "mike")
  */
 
-import { createClient } from "@supabase/supabase-js";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-const BUCKET = process.env.STORAGE_BUCKET ?? "mike";
+const BUCKET = process.env.R2_BUCKET_NAME ?? "mike";
 
 export const storageEnabled = Boolean(
-  process.env.SUPABASE_URL &&
-  process.env.SUPABASE_SECRET_KEY,
+  process.env.R2_ENDPOINT_URL &&
+  process.env.R2_ACCESS_KEY_ID &&
+  process.env.R2_SECRET_ACCESS_KEY,
 );
 
-function getClient() {
-  return createClient(
-    process.env.SUPABASE_URL!,
-    process.env.SUPABASE_SECRET_KEY!,
-    { auth: { persistSession: false } },
-  );
+function getClient(): S3Client {
+  return new S3Client({
+    region: "auto",
+    endpoint: process.env.R2_ENDPOINT_URL!,
+    credentials: {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+    },
+    forcePathStyle: true,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -33,11 +47,15 @@ export async function uploadFile(
   content: ArrayBuffer,
   contentType: string,
 ): Promise<void> {
-  const { error } = await getClient()
-    .storage
-    .from(BUCKET)
-    .upload(key, content, { contentType, upsert: true });
-  if (error) throw error;
+  const client = getClient();
+  await client.send(
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      Body: Buffer.from(content),
+      ContentType: contentType,
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -47,12 +65,13 @@ export async function uploadFile(
 export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
   if (!storageEnabled) return null;
   try {
-    const { data, error } = await getClient()
-      .storage
-      .from(BUCKET)
-      .download(key);
-    if (error || !data) return null;
-    return await data.arrayBuffer();
+    const client = getClient();
+    const response = await client.send(
+      new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+    );
+    if (!response.Body) return null;
+    const bytes = await response.Body.transformToByteArray();
+    return bytes.buffer as ArrayBuffer;
   } catch {
     return null;
   }
@@ -64,7 +83,8 @@ export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
 
 export async function deleteFile(key: string): Promise<void> {
   if (!storageEnabled) return;
-  await getClient().storage.from(BUCKET).remove([key]);
+  const client = getClient();
+  await client.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
 }
 
 // ---------------------------------------------------------------------------
@@ -78,13 +98,20 @@ export async function getSignedUrl(
 ): Promise<string | null> {
   if (!storageEnabled) return null;
   try {
-    const options = downloadFilename ? { download: downloadFilename } : undefined;
-    const { data, error } = await getClient()
-      .storage
-      .from(BUCKET)
-      .createSignedUrl(key, expiresIn, options);
-    if (error || !data) return null;
-    return data.signedUrl;
+    const client = getClient();
+    const command = new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      ...(downloadFilename
+        ? {
+            ResponseContentDisposition: buildContentDisposition(
+              "attachment",
+              downloadFilename,
+            ),
+          }
+        : {}),
+    });
+    return await awsGetSignedUrl(client, command, { expiresIn });
   } catch {
     return null;
   }
