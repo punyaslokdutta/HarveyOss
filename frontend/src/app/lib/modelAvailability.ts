@@ -27,7 +27,7 @@ export function isProviderAvailable(
 
 export function providerLabel(provider: ModelProvider): string {
     if (provider === "claude") return "Anthropic (Claude)";
-    if (provider === "openai") return "OpenAI";
+    if (provider === "openai") return "OpenAI-compatible";
     return "Google (Gemini)";
 }
 

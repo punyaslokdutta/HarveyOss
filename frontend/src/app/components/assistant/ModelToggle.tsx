@@ -26,9 +26,18 @@ export const MODELS: ModelOption[] = [
     { id: "gemini-3-flash-preview", label: "Gemini 3 Flash", group: "Google" },
     { id: "gpt-5.5", label: "GPT-5.5", group: "OpenAI" },
     { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", group: "OpenAI" },
+    { id: "qwen3:8b", label: "Qwen 3 8B (Ollama)", group: "OpenAI" },
+    { id: "qwen3:14b", label: "Qwen 3 14B (Ollama)", group: "OpenAI" },
 ];
 
-export const DEFAULT_MODEL_ID = "gemini-3-flash-preview";
+const configuredCompatDefault =
+    process.env.NEXT_PUBLIC_OPENAI_COMPAT_DEFAULT_MODEL?.trim() || "";
+
+export const DEFAULT_MODEL_ID = MODELS.some(
+    (model) => model.id === configuredCompatDefault,
+)
+    ? configuredCompatDefault
+    : "gemini-3-flash-preview";
 
 export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 

@@ -7,8 +7,9 @@ import type {
     StreamChatResult,
 } from "./types";
 
-const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+const OPENAI_BASE_URL = "https://api.openai.com/v1";
 const MAX_OUTPUT_TOKENS = 16384;
+type OpenAIEndpointMode = "responses" | "chat.completions";
 
 type ResponseInputItem =
     | { role: "user" | "assistant"; content: string }
@@ -35,14 +36,107 @@ type ResponseStreamEvent = {
     item?: ResponseFunctionCallItem;
 };
 
+type ChatCompletionToolCallDelta = {
+    index?: number;
+    id?: string;
+    function?: {
+        name?: string;
+        arguments?: string;
+    };
+};
+
+type ChatCompletionChunk = {
+    choices?: {
+        delta?: {
+            content?: string;
+            reasoning_content?: string;
+            tool_calls?: ChatCompletionToolCallDelta[];
+        };
+    }[];
+};
+
+type ChatCompletionToolCall = {
+    id: string;
+    name: string;
+    arguments: string;
+};
+
+type ChatCompletionTool = {
+    type: "function";
+    function: {
+        name: string;
+        description?: string;
+        parameters: Record<string, unknown>;
+    };
+};
+
+type ChatCompletionMessage =
+    | {
+          role: "system" | "user" | "assistant";
+          content: string;
+      }
+    | {
+          role: "assistant";
+          content: string;
+          tool_calls: {
+              id: string;
+              type: "function";
+              function: {
+                  name: string;
+                  arguments: string;
+              };
+          }[];
+      }
+    | {
+          role: "tool";
+          tool_call_id: string;
+          content: string;
+      };
+
 function apiKey(override?: string | null): string {
-    const key = override?.trim() || process.env.OPENAI_API_KEY?.trim() || "";
-    if (!key) {
+    if (override?.trim()) return override.trim();
+    if (process.env.OPENAI_COMPAT_BASE_URL?.trim()) {
+        return process.env.OPENAI_COMPAT_API_KEY?.trim() || "";
+    }
+    return (
+        process.env.OPENAI_API_KEY?.trim() ||
+        process.env.OPENAI_COMPAT_API_KEY?.trim() ||
+        ""
+    );
+}
+
+function normalizeBaseUrl(url: string): string {
+    return url.replace(/\/+$/, "");
+}
+
+function openAIBaseUrl(): string {
+    return normalizeBaseUrl(
+        process.env.OPENAI_COMPAT_BASE_URL?.trim() || OPENAI_BASE_URL,
+    );
+}
+
+function endpointMode(): OpenAIEndpointMode {
+    const configured = process.env.OPENAI_COMPAT_ENDPOINT_MODE?.trim();
+    if (configured === "responses" || configured === "chat.completions") {
+        return configured;
+    }
+    return process.env.OPENAI_COMPAT_BASE_URL?.trim()
+        ? "chat.completions"
+        : "responses";
+}
+
+function requestHeaders(key: string): Record<string, string> {
+    const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+    };
+    if (key) {
+        headers.Authorization = `Bearer ${key}`;
+    } else if (!process.env.OPENAI_COMPAT_BASE_URL?.trim()) {
         throw new Error(
-            "OpenAI API key is not configured. Set OPENAI_API_KEY or add a user OpenAI key.",
+            "OPENAI_API_KEY is required when using the hosted OpenAI API",
         );
     }
-    return key;
+    return headers;
 }
 
 function toResponseTools(tools: OpenAIToolSchema[]): ResponseFunctionTool[] {
@@ -59,6 +153,30 @@ function toResponseInput(messages: LlmMessage[]): ResponseInputItem[] {
         role: message.role,
         content: message.content,
     }));
+}
+
+function toChatCompletionTools(tools: OpenAIToolSchema[]): ChatCompletionTool[] {
+    return tools.map((tool) => ({
+        type: "function",
+        function: {
+            name: tool.function.name,
+            description: tool.function.description,
+            parameters: tool.function.parameters,
+        },
+    }));
+}
+
+function toChatCompletionMessages(
+    systemPrompt: string,
+    messages: LlmMessage[],
+): ChatCompletionMessage[] {
+    return [
+        { role: "system", content: systemPrompt },
+        ...messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+        })),
+    ];
 }
 
 function extractSseJson(buffer: string): { events: unknown[]; rest: string } {
@@ -104,6 +222,26 @@ function parseFunctionCall(item: ResponseFunctionCallItem): NormalizedToolCall {
     };
 }
 
+function normalizeChatCompletionToolCall(
+    call: ChatCompletionToolCall,
+): NormalizedToolCall {
+    let input: Record<string, unknown> = {};
+    try {
+        const parsed = JSON.parse(call.arguments || "{}");
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            input = parsed as Record<string, unknown>;
+        }
+    } catch {
+        input = {};
+    }
+
+    return {
+        id: call.id,
+        name: call.name,
+        input,
+    };
+}
+
 async function createResponse(params: {
     model: string;
     input: ResponseInputItem[];
@@ -115,12 +253,9 @@ async function createResponse(params: {
     reasoningSummary?: boolean;
     apiKey: string;
 }): Promise<Response> {
-    const response = await fetch(OPENAI_RESPONSES_URL, {
+    const response = await fetch(`${openAIBaseUrl()}/responses`, {
         method: "POST",
-        headers: {
-            Authorization: `Bearer ${params.apiKey}`,
-            "Content-Type": "application/json",
-        },
+        headers: requestHeaders(params.apiKey),
         body: JSON.stringify({
             model: params.model,
             instructions: params.instructions || undefined,
@@ -147,9 +282,170 @@ async function createResponse(params: {
     return response;
 }
 
+async function createChatCompletion(params: {
+    model: string;
+    messages: ChatCompletionMessage[];
+    tools?: ChatCompletionTool[];
+    stream?: boolean;
+    maxTokens?: number;
+    apiKey: string;
+}): Promise<Response> {
+    const response = await fetch(`${openAIBaseUrl()}/chat/completions`, {
+        method: "POST",
+        headers: requestHeaders(params.apiKey),
+        body: JSON.stringify({
+            model: params.model,
+            messages: params.messages,
+            tools: params.tools?.length ? params.tools : undefined,
+            tool_choice: params.tools?.length ? "auto" : undefined,
+            stream: params.stream,
+            max_tokens: params.maxTokens ?? MAX_OUTPUT_TOKENS,
+        }),
+    });
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(
+            `OpenAI-compatible request failed (${response.status}): ${text || response.statusText}`,
+        );
+    }
+
+    return response;
+}
+
+async function streamChatCompletions(
+    params: StreamChatParams,
+): Promise<StreamChatResult> {
+    const {
+        model,
+        systemPrompt,
+        tools = [],
+        callbacks = {},
+        runTools,
+        apiKeys,
+    } = params;
+    const maxIter = params.maxIterations ?? 10;
+    const key = apiKey(apiKeys?.openai);
+    const chatTools = toChatCompletionTools(tools);
+    const hasTools = chatTools.length > 0;
+    let chatMessages = toChatCompletionMessages(systemPrompt, params.messages);
+    let fullText = "";
+
+    for (let iter = 0; iter < maxIter; iter++) {
+        const response = await createChatCompletion({
+            model,
+            messages: chatMessages,
+            tools: chatTools,
+            stream: true,
+            apiKey: key,
+        });
+        if (!response.body) {
+            throw new Error("OpenAI-compatible chat completion had no body");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        const toolCallsByIndex = new Map<number, ChatCompletionToolCall>();
+        const startedToolCallIds = new Set<string>();
+        let buffer = "";
+        let pendingText = "";
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const extracted = extractSseJson(buffer);
+            buffer = extracted.rest;
+
+            for (const event of extracted.events as ChatCompletionChunk[]) {
+                const delta = event.choices?.[0]?.delta;
+                if (!delta) continue;
+
+                if (typeof delta.reasoning_content === "string") {
+                    callbacks.onReasoningDelta?.(delta.reasoning_content);
+                }
+
+                if (typeof delta.content === "string") {
+                    pendingText += delta.content;
+                    fullText += delta.content;
+                    callbacks.onContentDelta?.(delta.content);
+                }
+
+                for (const toolDelta of delta.tool_calls ?? []) {
+                    const index = toolDelta.index ?? 0;
+                    const current = toolCallsByIndex.get(index) ?? {
+                        id: toolDelta.id ?? `tool_${index}`,
+                        name: "",
+                        arguments: "",
+                    };
+
+                    if (toolDelta.id) current.id = toolDelta.id;
+                    if (toolDelta.function?.name) {
+                        current.name = toolDelta.function.name;
+                    }
+                    if (toolDelta.function?.arguments) {
+                        current.arguments += toolDelta.function.arguments;
+                    }
+
+                    toolCallsByIndex.set(index, current);
+
+                    if (current.name && !startedToolCallIds.has(current.id)) {
+                        startedToolCallIds.add(current.id);
+                        callbacks.onToolCallStart?.({
+                            id: current.id,
+                            name: current.name,
+                            input: {},
+                        });
+                    }
+                }
+            }
+        }
+
+        const toolCalls = [...toolCallsByIndex.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([, call]) => call)
+            .filter((call) => !!call.name);
+
+        if (!toolCalls.length || !runTools) {
+            break;
+        }
+
+        const normalizedCalls = toolCalls.map(normalizeChatCompletionToolCall);
+        const results = await runTools(normalizedCalls);
+
+        chatMessages = [
+            ...chatMessages,
+            {
+                role: "assistant",
+                content: pendingText,
+                tool_calls: toolCalls.map((call) => ({
+                    id: call.id,
+                    type: "function" as const,
+                    function: {
+                        name: call.name,
+                        arguments: call.arguments || "{}",
+                    },
+                })),
+            },
+            ...results.map((result) => ({
+                role: "tool" as const,
+                tool_call_id: result.tool_use_id,
+                content: result.content,
+            })),
+        ];
+    }
+
+    return { fullText };
+}
+
 export async function streamOpenAI(
     params: StreamChatParams,
 ): Promise<StreamChatResult> {
+    if (endpointMode() === "chat.completions") {
+        return streamChatCompletions(params);
+    }
+
     const {
         model,
         systemPrompt,
@@ -271,6 +567,38 @@ export async function completeOpenAIText(params: {
     maxTokens?: number;
     apiKeys?: { openai?: string | null };
 }): Promise<string> {
+    if (endpointMode() === "chat.completions") {
+        const response = await createChatCompletion({
+            model: params.model,
+            messages: toChatCompletionMessages(params.systemPrompt ?? "", [
+                { role: "user", content: params.user },
+            ]),
+            maxTokens: params.maxTokens ?? 512,
+            apiKey: apiKey(params.apiKeys?.openai),
+        });
+        const json = (await response.json()) as {
+            choices?: {
+                message?: {
+                    content?:
+                        | string
+                        | {
+                              type?: string;
+                              text?: string;
+                          }[];
+                };
+            }[];
+        };
+
+        const content = json.choices?.[0]?.message?.content;
+        if (typeof content === "string") return content;
+        return (
+            content
+                ?.filter((part) => part.type === "text")
+                .map((part) => part.text ?? "")
+                .join("") ?? ""
+        );
+    }
+
     const response = await createResponse({
         model: params.model,
         instructions: params.systemPrompt,

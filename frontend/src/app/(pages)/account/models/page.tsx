@@ -34,8 +34,8 @@ const API_KEY_FIELDS = [
     },
     {
         provider: "openai",
-        label: "OpenAI API Key",
-        placeholder: "sk-…",
+        label: "OpenAI-compatible API Key",
+        placeholder: "Optional for env-configured local runtimes",
     },
 ] as const;
 
@@ -84,7 +84,9 @@ export default function ModelsAndApiKeysPage() {
                 <p className="text-sm text-gray-500 mb-4 max-w-xl">
                     You must provide your own API keys for the app to work or
                     add your API keys into the .env file if you are running your
-                    own instance of Mike.
+                    own instance of Mike. For Ollama and other env-configured
+                    OpenAI-compatible endpoints, the OpenAI-compatible field can
+                    stay empty.
                 </p>
                 <p className="text-xs text-gray-400 mb-4 max-w-xl">
                     Title generation automatically routes to the cheapest
@@ -184,7 +186,9 @@ function TabularModelDropdown({
                                         onSelect={() => onChange(m.id)}
                                         title={
                                             !available
-                                                ? `Add a ${providerLabel(provider)} API key to use this model`
+                                                ? provider === "openai"
+                                                    ? "Configure an OpenAI-compatible endpoint or API key to use this model"
+                                                    : `Add a ${providerLabel(provider)} API key to use this model`
                                                 : undefined
                                         }
                                     >

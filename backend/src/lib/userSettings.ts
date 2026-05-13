@@ -3,7 +3,8 @@ import {
     resolveModel,
     DEFAULT_TITLE_MODEL,
     DEFAULT_TABULAR_MODEL,
-    OPENAI_LOW_MODELS,
+    defaultOpenAILowModel,
+    hasOpenAICompatibleBaseUrl,
     type UserApiKeys,
 } from "./llm";
 import { getUserApiKeys as getStoredUserApiKeys } from "./userApiKeys";
@@ -20,7 +21,9 @@ export type UserModelSettings = {
 // set, defaults to Gemini (the dev-mode env fallback).
 function resolveTitleModel(apiKeys: UserApiKeys): string {
     if (apiKeys.gemini?.trim()) return DEFAULT_TITLE_MODEL;
-    if (apiKeys.openai?.trim()) return OPENAI_LOW_MODELS[0];
+    if (apiKeys.openai?.trim() || hasOpenAICompatibleBaseUrl()) {
+        return defaultOpenAILowModel();
+    }
     if (apiKeys.claude?.trim()) return "claude-haiku-4-5";
     return DEFAULT_TITLE_MODEL;
 }

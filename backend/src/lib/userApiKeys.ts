@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { createServerSupabase } from "./supabase";
-import type { UserApiKeys } from "./llm";
+import { hasOpenAICompatibleBaseUrl, type UserApiKeys } from "./llm";
 
 type Db = ReturnType<typeof createServerSupabase>;
 export type ApiKeyProvider = "claude" | "gemini" | "openai";
@@ -27,12 +27,22 @@ function envApiKey(provider: ApiKeyProvider): string | null {
         );
     }
     if (provider === "openai") {
-        return process.env.OPENAI_API_KEY?.trim() || null;
+        if (hasOpenAICompatibleBaseUrl()) {
+            return process.env.OPENAI_COMPAT_API_KEY?.trim() || null;
+        }
+        return (
+            process.env.OPENAI_API_KEY?.trim() ||
+            process.env.OPENAI_COMPAT_API_KEY?.trim() ||
+            null
+        );
     }
     return process.env.GEMINI_API_KEY?.trim() || null;
 }
 
 export function hasEnvApiKey(provider: ApiKeyProvider): boolean {
+    if (provider === "openai" && hasOpenAICompatibleBaseUrl()) {
+        return true;
+    }
     return !!envApiKey(provider);
 }
 

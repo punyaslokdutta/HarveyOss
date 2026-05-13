@@ -60,6 +60,12 @@ R2_BUCKET_NAME=mike
 GEMINI_API_KEY=your-gemini-key
 ANTHROPIC_API_KEY=your-anthropic-key
 OPENAI_API_KEY=your-openai-key
+# Optional: self-hosted OpenAI-compatible runtime such as Ollama or vLLM.
+# Leave OPENAI_API_KEY empty when you only want to use the local endpoint.
+OPENAI_COMPAT_BASE_URL=
+OPENAI_COMPAT_MODEL=
+OPENAI_COMPAT_ENDPOINT_MODE=
+OPENAI_COMPAT_API_KEY=
 RESEND_API_KEY=your-resend-key
 USER_API_KEYS_ENCRYPTION_SECRET=your-long-random-secret
 ```
@@ -70,11 +76,12 @@ Create `frontend/.env.local`:
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your-supabase-anon-key
 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
+NEXT_PUBLIC_OPENAI_COMPAT_DEFAULT_MODEL=
 ```
 
 Supabase values come from the project dashboard. Use the project URL for `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`, the service role key for the backend `SUPABASE_SECRET_KEY`, and the anon/public key for `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`. If your Supabase project shows multiple key formats, use the legacy JWT-style anon and service role keys expected by the Supabase client libraries.
 
-Provider keys are only needed for the models and email features you plan to use. Model provider keys can be configured in `backend/.env` for the whole instance, or per user in **Account > Models & API Keys**. If a provider key is present in `backend/.env`, that provider is available by default and the matching browser API key field is read-only.
+Provider keys are only needed for the models and email features you plan to use. Model provider keys can be configured in `backend/.env` for the whole instance, or per user in **Account > Models & API Keys**. If a provider key is present in `backend/.env`, or if `OPENAI_COMPAT_BASE_URL` points at a self-hosted runtime, that provider is available by default and the matching browser API key field is read-only.
 
 ## Install
 
@@ -132,12 +139,17 @@ R2_ENDPOINT_URL=http://minio:9000
 R2_ACCESS_KEY_ID=minioadmin
 R2_SECRET_ACCESS_KEY=minioadmin
 R2_BUCKET_NAME=mike
+OPENAI_COMPAT_BASE_URL=http://host.docker.internal:11434/v1
+OPENAI_COMPAT_MODEL=qwen3:8b
+OPENAI_COMPAT_ENDPOINT_MODE=chat.completions
+OPENAI_COMPAT_API_KEY=
 
 # frontend/.env.local.docker
 NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=<publishable key from `supabase status`>
 SUPABASE_SECRET_KEY=<secret key from `supabase status`>
 NEXT_PUBLIC_API_BASE_URL=http://localhost:4001
+NEXT_PUBLIC_OPENAI_COMPAT_DEFAULT_MODEL=qwen3:8b
 ```
 
 Notes:
@@ -145,6 +157,14 @@ Notes:
 - The Docker stack bootstraps the `mike` bucket in MinIO automatically.
 - Existing cloud env files stay untouched because Docker uses the dedicated `.env.docker` files.
 - This setup works with the existing backend CORS config by setting `FRONTEND_URL=http://localhost:4000`.
+
+To test Ollama locally with the Docker stack:
+
+1. Install Ollama on the host machine and start it with `ollama serve`.
+2. Pull a model such as `ollama pull qwen3:8b`.
+3. Keep `OPENAI_COMPAT_BASE_URL=http://host.docker.internal:11434/v1` in `backend/.env.docker`.
+4. Set `NEXT_PUBLIC_OPENAI_COMPAT_DEFAULT_MODEL=qwen3:8b` in `frontend/.env.local.docker`.
+5. Restart `docker compose up -d --build` and open Mike on `http://localhost:4000`.
 
 Useful lifecycle commands:
 
